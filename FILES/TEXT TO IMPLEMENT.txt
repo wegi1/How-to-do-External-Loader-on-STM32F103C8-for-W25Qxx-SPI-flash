@@ -1,0 +1,194 @@
+main.c
+//---
+
+/* USER CODE BEGIN Includes */
+#include "W25Qxx.h"
+/* USER CODE END Includes */
+
+/* USER CODE BEGIN PV */
+static uint8_t test = 0;
+/* USER CODE END PV */
+
+/* USER CODE BEGIN 0 */
+void pls_tst(void){
+	test++;
+}
+/* USER CODE END 0 */
+
+  /* USER CODE BEGIN 2 */
+  pls_tst();
+
+extern int Init(void) ;
+extern int Write(uint32_t Address, uint32_t Size, uint8_t* buffer);
+extern int Read (uint32_t Address, uint32_t Size, uint8_t* buffer);
+extern int SectorErase(uint32_t EraseStartAddress, uint32_t EraseEndAddress);
+extern int MassErase(void) ;
+extern uint32_t CheckSum(uint32_t StartAddress, uint32_t Size, uint32_t InitVal);
+extern uint64_t Verify (uint32_t MemoryAddr, uint32_t RAMBufferAddr, uint32_t Size, uint32_t missalignement);
+
+
+if(test == 0){
+  Init();
+  Write(0,0,0);
+  Read(0,0,0);
+  SectorErase(0, 0);
+  MassErase();
+  CheckSum(0, 0, 0);
+  Verify(0, 0, 0, 0);
+}
+  /* USER CODE END 2 */
+
+  while (1)
+  {
+    /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
+	  HAL_Delay(200);
+	  HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
+	  HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
+  }
+  /* USER CODE END 3 */
+
+//===================================================
+linker.ld
+/* Specify the memory areas */
+MEMORY
+{
+RAM (xrw)      : ORIGIN = 0x20000004, LENGTH = 20K-4
+}
+//===================================================
+W25Qxx.h
+//#define W25Q32
+#ifdef W25Q32
+#define MEMORY_FLASH_SIZE				0x1000000 /* 32Mbit =>4Mbyte */
+#else
+#define MEMORY_FLASH_SIZE				0x200000 /* 16Mbit =>2Mbyte */
+#endif
+//===========================================================
+Dev_Inf.c
+/* This structure contains information used by ST-LINK Utility to program and erase the device */
+#if defined (__ICCARM__)
+__root struct StorageInfo const StorageInfo  =  {
+#else
+struct StorageInfo const StorageInfo = {
+#endif
+
+	"W25Q_F103Cx_SPI_EL_2MB",                  // Device Name + version number
+
+    NOR_FLASH,                           // Device Type
+    0x90000000,                          // Device Start Address
+    MEMORY_FLASH_SIZE,                   // Device Size in Bytes
+    MEMORY_PAGE_SIZE,                    // Programming Page Size
+    0xFF,                                // Initial Content of Erased Memory
+
+    // Specify Size and Address of Sectors (view example below)
+    {   {
+            (MEMORY_FLASH_SIZE / MEMORY_SECTOR_SIZE),  // Sector Numbers,
+            (uint32_t) MEMORY_SECTOR_SIZE
+        },       //Sector Size
+
+        { 0x00000000, 0x00000000 }
+    }
+};
+//===========================================================
+W25Qxx.c
+
+void flash_WriteMemory(uint8_t* buffer, uint32_t address, uint32_t buffer_size)
+{
+	uint32_t page = address/256;
+	uint16_t offset = address%256;
+	uint32_t size = buffer_size;
+	uint8_t tData[266];
+	uint32_t startPage = page;
+	uint32_t endPage  = startPage + ((size+offset-1)/256);
+	uint32_t numPages = endPage-startPage+1;
+
+	uint32_t dataPosition = 0;
+
+	 HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
+	 HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
+
+
+	// write the data
+	for (uint32_t i=0; i<numPages; i++)
+	{
+		uint32_t memAddr = (startPage*256)+offset;
+		uint16_t bytesremaining  = bytestowrite(size, offset);
+		uint32_t indx = 0;
+
+		write_enable();
+
+		if (numBLOCK<512)   // Chip Size<256Mb
+		{
+			tData[0] = W25Q_PAGE_PROGRAM;  // page program
+			tData[1] = (memAddr>>16)&0xFF;  // MSB of the memory Address
+			tData[2] = (memAddr>>8)&0xFF;
+			tData[3] = (memAddr)&0xFF; // LSB of the memory Address
+
+			indx = 4;
+		}
+
+		else // we use 32bit memory address for chips >= 256Mb
+		{
+			tData[0] = W25Q_PAGE_PROGRAM_4B;  // page program with 4-Byte Address
+			tData[1] = (memAddr>>24)&0xFF;  // MSB of the memory Address
+			tData[2] = (memAddr>>16)&0xFF;
+			tData[3] = (memAddr>>8)&0xFF;
+			tData[4] = (memAddr)&0xFF; // LSB of the memory Address
+
+			indx = 5;
+		}
+
+		uint16_t bytestosend  = bytesremaining + indx;
+
+		for (uint16_t i=0; i<bytesremaining; i++)
+		{
+			tData[indx++] = buffer[i+dataPosition];
+		}
+
+		if (bytestosend > 250)
+		{
+			csLOW();
+			SPI_Write(tData, 100);
+			SPI_Write(tData+100, bytestosend-100);
+			csHIGH();
+
+		}
+
+		else
+		{
+			csLOW();
+			SPI_Write(tData, bytestosend);
+			csHIGH();
+		}
+
+
+		startPage++;
+		offset = 0;
+		size = size-bytesremaining;
+		dataPosition = dataPosition+bytesremaining;
+
+		W25Q_Waitforwrite();
+		write_disable();
+
+	}
+
+}
+
+void flash_ReadMemory (uint32_t Addr, uint32_t Size, uint8_t* buffer)
+{
+	uint32_t page = Addr/256;
+	uint16_t offset = Addr%256;
+
+	W25Q_FastRead(page, offset, Size, buffer);
+	HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
+	HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
+}
+//===========================================================
+In Project->Properties->C/C++ Build->Settings->Build Steps->Post-build steps->Command:
+cmd.exe /C copy /Y "${BuildArtifactFileBaseName}.elf" "..\W25Q_BLUEPILL_F103_EL_2MB.stldr"
+//===========================================================
+In Project->Properties->C/C++ Build->Settings->Tool Settings->MCU/MPU GCC Linker->General
+In the Linker Script (-T) text edit  field put the text:
+ ${workspace_loc:/${ProjName}/linker.ld}
+//===========================================================
